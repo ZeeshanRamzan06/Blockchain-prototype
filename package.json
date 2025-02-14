@@ -1,0 +1,19 @@
+{
+  "name": "blockchain-websocket",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node p2p-network/api.js"
+  },
+  "type": "module",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "elliptic": "^6.6.1",
+    "express": "^4.21.2",
+    "level": "^9.0.0",
+    "ws": "^8.18.0"
+  }
+}
