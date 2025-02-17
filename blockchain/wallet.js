@@ -1,5 +1,6 @@
 import crypto from 'crypto';
-import { ec as EC } from 'elliptic'; // Use elliptic library for ECDSA
+import pkg from 'elliptic';
+const { ec: EC } = pkg; // Use elliptic library for ECDSA
 const ec = new EC('secp256k1'); // Bitcoin's curve
 
 class Wallet {
@@ -14,13 +15,21 @@ class Wallet {
         const hash = crypto.createHash('sha256').update(data).digest('hex');
         const signature = ec.keyFromPrivate(this.privateKey).sign(hash).toDER('hex');
         return signature;
+
     }
 
     // Verify a signature with the public key
     static verifySignature(publicKey, data, signature) {
-        const hash = crypto.createHash('sha256').update(data).digest('hex');
-        const key = ec.keyFromPublic(publicKey, 'hex');
-        return key.verify(hash, signature);
+        try {
+            const hash = crypto.createHash('sha256').update(data).digest('hex');
+            const key = ec.keyFromPublic(publicKey, 'hex');
+            
+            // Handle DER format signature
+            return key.verify(hash, signature);
+        } catch (error) {
+            console.error('Verification error:', error.message);
+            return false;
+        }
     }
 }
 

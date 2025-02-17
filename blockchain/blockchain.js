@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import Block from './block.js';
 import Transaction from './transaction.js';
-
+import Balances from './balance.js';
 class Blockchain {
     constructor() {
         this.chain = [this.createGenesisBlock()]; // Initialize the chain with the genesis block
@@ -35,6 +35,10 @@ class Blockchain {
 
     // Add a transaction to the pending transactions list
     addTransaction(transaction) {
+        if (!(transaction instanceof Transaction)) {
+            throw new Error('Invalid transaction object');
+        }
+
         const dataHash = this.hashData(transaction.data);
 
         if (this.isDuplicateTransaction(transaction)) {
@@ -56,7 +60,10 @@ class Blockchain {
     }
 
     // Mine pending transactions and add them to a new block
-    async minePendingTransactions(minerPublicKey) {
+    async minePendingTransactions(minerPublicKey = 'defaultMinerPublicKey') {
+        if (!minerPublicKey) {
+            throw new Error('Miner public key cannot be null or undefined');
+        }
         const rewardTransaction = new Transaction(null, minerPublicKey, 'Miner Reward');
         this.pendingTransactions.push(rewardTransaction);
 
@@ -69,11 +76,10 @@ class Blockchain {
         this.pendingTransactions = []; // Clear pending transactions
     }
 
-
     // Replace the chain with a new one if it's valid and longer
     replaceChain(newChain) {
         if (newChain.length <= this.chain.length) {
-            console.log('Received chain is not longer than the current chain.');
+            // console.log('Received chain is not longer than the current chain.');
             return false;
         }
 

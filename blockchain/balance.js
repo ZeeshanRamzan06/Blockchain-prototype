@@ -1,6 +1,6 @@
-import level from 'level';
+import { Level } from 'level';
 
-const db = level('./balances'); // Database to store miner balances
+const db = new Level('./balances'); // Database to store miner balances
 
 class Balances {
     // Get the balance of a miner
@@ -15,6 +15,9 @@ class Balances {
 
     // Update the balance of a miner
     static async updateBalance(publicKey, amount) {
+        if (!publicKey) {
+            throw new Error('Public key cannot be null or undefined');
+        }
         const currentBalance = await this.getBalance(publicKey);
         await db.put(publicKey, currentBalance + amount);
     }

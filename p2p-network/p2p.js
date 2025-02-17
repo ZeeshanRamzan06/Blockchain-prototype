@@ -1,5 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import Blockchain from '../blockchain/blockchain.js';
+import Transaction from '../blockchain/transaction.js';
 
 class P2PServer {
     constructor(blockchain) {
@@ -23,7 +24,7 @@ class P2PServer {
     // Handle new socket connections
     connectSocket(socket) {
         this.sockets.push(socket);
-        console.log('Socket connected');
+        // console.log('Socket connected');
 
         // Handle incoming messages
         socket.on('message', (message) => {
@@ -44,12 +45,18 @@ class P2PServer {
     handleMessage(data) {
         switch (data.type) {
             case 'CHAIN':
-                console.log('Received chain from peer:', data.chain);
+                // console.log('Received chain from peer:', data.chain);
                 this.blockchain.replaceChain(data.chain);
                 break;
             case 'TRANSACTION':
                 console.log('Received transaction:', data.transaction);
-                this.blockchain.addTransaction(data.transaction);
+                const transaction = new Transaction(
+                    data.transaction.sender,
+                    data.transaction.receiver,
+                    data.transaction.data,
+                    data.transaction.signature
+                );
+                this.blockchain.addTransaction(transaction);
                 break;
         }
     }
