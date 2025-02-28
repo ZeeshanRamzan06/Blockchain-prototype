@@ -6,6 +6,8 @@ import Blocks from './pages/Blocks';
 import Transactions from './pages/Transactions';
 import Rewards from './pages/Rewards';
 import Login from './pages/Login';
+import MinerDashboard from './components/MinerDashboard';
+import Faucet from './pages/faucet';
 
 const App = () => {
     return (
@@ -17,6 +19,8 @@ const App = () => {
                 <Route path="/transactions" element={<Transactions />} />
                 <Route path="/rewards" element={<Rewards />} />
                 <Route path="/login" element={<Login />} />
+                <Route path="/miner-dashboard" element={<MinerDashboard />} />
+                <Route path='/faucet' element={<Faucet />} />
             </Routes>
         </Router>
     );

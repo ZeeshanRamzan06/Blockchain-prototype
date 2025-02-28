@@ -19,6 +19,8 @@ const BlockExplorer = () => {
                         <p className="text-gray-700"><span className="font-bold">Index:</span> {block.index}</p>
                         <p className="text-gray-700"><span className="font-bold">Hash:</span> {block.hash}</p>
                         <p className="text-gray-700"><span className="font-bold">Transactions:</span> {block.transactions.length}</p>
+                        <p className="text-gray-700"><span className="font-bold">Timestamp:</span> {block.timestamp}</p>
+
                     </div>
                 ))}
             </div>

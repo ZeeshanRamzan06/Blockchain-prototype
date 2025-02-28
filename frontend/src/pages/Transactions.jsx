@@ -19,6 +19,7 @@ const Transactions = () => {
                         <p className="text-gray-700"><span className="font-bold">Sender:</span> {tx.sender}</p>
                         <p className="text-gray-700"><span className="font-bold">Receiver:</span> {tx.receiver}</p>
                         <p className="text-gray-700"><span className="font-bold">Data:</span> {tx.data}</p>
+                        <p className="text-gray-700"><span className="font-bold">Timestamp:</span> {new Date(tx.timestamp).toLocaleString()}</p>
                     </div>
                 ))}
             </div>

@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import axios from 'axios';
+import MetaMaskIntegration from '../utils/metamask';
 
 const MinerDashboard = () => {
     const [walletAddress, setWalletAddress] = useState('');
     const [fileData, setFileData] = useState(null);
     const [textData, setTextData] = useState('');
-    const [receiver, setReceiver] = useState('');
     const [error, setError] = useState('');
     const [miningStatus, setMiningStatus] = useState('');
     const [balance, setBalance] = useState(0);
@@ -18,21 +18,18 @@ const MinerDashboard = () => {
     const handleFileUpload = (event) => {
         const file = event.target.files[0];
         if (file) {
-            // Check file size (50MB = 50 * 1024 * 1024 bytes)
             if (file.size > 50 * 1024 * 1024) {
                 setError('File size exceeds 50MB limit');
-                event.target.value = ''; // Reset file input
+                event.target.value = '';
                 return;
             }
     
             const reader = new FileReader();
             reader.onload = (e) => {
                 setFileData(e.target.result);
-                setError(''); // Clear any previous errors
+                setError('');
             };
-            reader.onerror = () => {
-                setError('Error reading file');
-            };
+            reader.onerror = () => setError('Error reading file');
             reader.readAsText(file);
         }
     };
@@ -48,7 +45,7 @@ const MinerDashboard = () => {
             const accounts = await ethereum.request({ method: 'eth_accounts' });
             if (accounts.length > 0) {
                 setWalletAddress(accounts[0]);
-                fetchBalance(accounts[0]);
+                await fetchBalance(accounts[0]);
             }
         } catch (error) {
             console.error(error);
@@ -58,29 +55,35 @@ const MinerDashboard = () => {
 
     const connectWallet = async () => {
         try {
-            const { ethereum } = window;
-            if (!ethereum) {
-                setError('Please install MetaMask!');
-                return;
+            const metamask = window.ethereum;
+            if (!metamask) {
+                throw new Error('Please install MetaMask!');
             }
 
-            const accounts = await ethereum.request({
+            const accounts = await metamask.request({
                 method: 'eth_requestAccounts'
             });
-            setWalletAddress(accounts[0]);
-            fetchBalance(accounts[0]);
+
+            if (!accounts || accounts.length === 0) {
+                throw new Error('No accounts found');
+            }
+
+            const address = accounts[0];
+            setWalletAddress(address);
+            await fetchBalance(address);
         } catch (error) {
-            console.error(error);
-            setError('Error connecting to MetaMask');
+            setError(error.message);
         }
     };
 
     const fetchBalance = async (address) => {
         try {
-            const response = await axios.get(`http://localhost:6001/balance/${address}`);
-            setBalance(response.data.balance);
+            const provider = new ethers.providers.JsonRpcProvider('http://localhost:6001');
+            const balance = await provider.getBalance(address);
+            setBalance(parseFloat(ethers.utils.formatUnits(balance, 18))); // Convert wei to QRYPT (18 decimals)
         } catch (error) {
             console.error('Error fetching balance:', error);
+            setError('Error fetching balance');
         }
     };
 
@@ -90,74 +93,71 @@ const MinerDashboard = () => {
                 setError('Please install MetaMask!');
                 return;
             }
-    
+
             const data = fileData || textData;
             if (!data) {
                 setError('Please provide data to submit');
                 return;
             }
-    
-            if (!receiver) {
-                setError('Please provide a receiver address');
-                return;
-            }
-    
+
             const provider = new ethers.providers.Web3Provider(window.ethereum);
             const signer = provider.getSigner();
-    
-            setMiningStatus('Preparing transaction...');
-    
-            // Get the actual sender address
             const sender = await signer.getAddress();
-    
-            // Create message to sign
+
+            setMiningStatus('Preparing transaction...');
+
+            const timestamp = Date.now();
             const messageToSign = JSON.stringify({
                 sender: sender,
-                receiver: receiver,
+                receiver: null,
                 data: data,
-                timestamp: Date.now()
+                timestamp: timestamp,
+                gasLimit: 0
             });
-    
-            // Sign the message
+
             setMiningStatus('Please sign the transaction in MetaMask...');
             const signature = await signer.signMessage(messageToSign);
-    
-            // Submit to blockchain
-            setMiningStatus('Submitting transaction...');
+
+            setMiningStatus('Submitting transaction and mining block...');
+
+            const contractAddress = '0xQRYPT1234567890abcdef'; // Mock QRYPT contract address
+            const abi = [
+                'function transfer(address to, uint256 value) returns (bool)',
+                'function balanceOf(address account) view returns (uint256)'
+            ]; // Simplified ERC-20 ABI
+            const contract = new ethers.Contract(contractAddress, abi, signer);
+
+            const tx = await contract.transfer('0xMinerRewardAddress', ethers.utils.parseUnits('100', 18)); // Reward 100 QRYPT to miner
+            await tx.wait();
+
             const response = await axios.post('http://localhost:6001/submit-data', {
                 sender: sender,
-                receiver: receiver,
+                receiver: null,
                 data: data,
                 signature: signature,
-                miner: sender,
-                timestamp: JSON.parse(messageToSign).timestamp // Include the same timestamp
+                timestamp: timestamp,
+                gasLimit: 0
             });
-    
-            setMiningStatus('Transaction successful!');
-            // Refresh balance after mining
-            fetchBalance(sender);
-            
+
+            setMiningStatus('Block mined successfully! TX Hash: ' + response.data.txHash);
+            await fetchBalance(sender);
+
             // Clear form
             setFileData(null);
             setTextData('');
-            setReceiver('');
-            
-            // Reset file input if it exists
             const fileInput = document.querySelector('input[type="file"]');
-            if (fileInput) {
-                fileInput.value = '';
-            }
+            if (fileInput) fileInput.value = '';
         } catch (error) {
             console.error('Error:', error);
             if (error.response?.data) {
-                setError(`Transaction failed: ${error.response.data}`);
+                console.log('Backend error:', error.response.data);
+                setError(`Transaction failed: ${error.response.data.error || error.response.data}`);
             } else {
                 setError(`Error: ${error.message}`);
             }
             setMiningStatus('');
         }
     };
-    
 
     return (
         <div className="max-w-2xl mx-auto p-6 bg-white rounded-lg shadow-lg">
@@ -178,14 +178,14 @@ const MinerDashboard = () => {
                         <p className="text-green-600 font-medium">
                             Connected: {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
                         </p>
-                        <p className="mt-2">Balance: {balance} tokens</p>
+                        <p className="mt-2">Balance: {balance} QRYPT</p>
                     </div>
                 )}
             </div>
 
             {/* Data Upload Section */}
             <div className="border rounded-lg p-4 mb-6">
-                <h3 className="text-lg font-medium mb-4">Step 2: Upload Data</h3>
+                <h3 className="text-lg font-medium mb-4">Step 2: Upload Data to Mine</h3>
                 <div className="space-y-4">
                     <div>
                         <label className="block text-sm font-medium mb-2">Upload File</label>
@@ -202,16 +202,6 @@ const MinerDashboard = () => {
                             onChange={(e) => setTextData(e.target.value)}
                             className="w-full border p-2 rounded h-24 resize-none"
                             placeholder="Enter your data here..."
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium mb-2">Receiver Address</label>
-                        <input
-                            type="text"
-                            value={receiver}
-                            onChange={(e) => setReceiver(e.target.value)}
-                            className="w-full border p-2 rounded"
-                            placeholder="0x..."
                         />
                     </div>
                 </div>

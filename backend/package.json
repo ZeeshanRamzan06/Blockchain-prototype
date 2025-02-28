@@ -1,0 +1,27 @@
+{
+  "name": "blockchain-websocket",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node p2p-network/api.js"
+  },
+  "type": "module",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@ethereumjs/common": "^4.4.0",
+    "@ethereumjs/evm": "^3.1.1",
+    "@ethereumjs/trie": "^6.2.1",
+    "@ethereumjs/tx": "^5.4.0",
+    "dotenv": "^16.4.7",
+    "elliptic": "^6.6.1",
+    "ethers": "^6.13.5",
+    "express": "^4.21.2",
+    "level": "^9.0.0",
+    "leveldown": "^6.1.1",
+    "levelup": "^5.1.1",
+    "ws": "^8.18.1"
+  }
+}
