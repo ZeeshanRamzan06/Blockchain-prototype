@@ -110,7 +110,7 @@ const MinerDashboard = () => {
             const messageToSign = JSON.stringify({
                 sender: sender,
                 receiver: null,
-                data: data,
+                data: ethers.utils.hexlify(ethers.utils.toUtf8Bytes(data)), // Convert data to hex string
                 timestamp: timestamp,
                 gasLimit: 0
             });
@@ -120,20 +120,21 @@ const MinerDashboard = () => {
 
             setMiningStatus('Submitting transaction and mining block...');
 
-            const contractAddress = '0xQRYPT1234567890abcdef'; // Mock QRYPT contract address
-            const abi = [
-                'function transfer(address to, uint256 value) returns (bool)',
-                'function balanceOf(address account) view returns (uint256)'
-            ]; // Simplified ERC-20 ABI
-            const contract = new ethers.Contract(contractAddress, abi, signer);
+            const tx = {
+                from: sender,
+                to: null, // Contract deployment
+                data: ethers.utils.hexlify(ethers.utils.toUtf8Bytes(data)), // Convert data to hex string
+                gasLimit: ethers.utils.hexlify(3000000), // Example gas limit
+                value: ethers.utils.parseEther('0') // No value for contract deployment
+            };
 
-            const tx = await contract.transfer('0xMinerRewardAddress', ethers.utils.parseUnits('100', 18)); // Reward 100 QRYPT to miner
-            await tx.wait();
+            const txResponse = await signer.sendTransaction(tx);
+            await txResponse.wait();
 
             const response = await axios.post('http://localhost:6001/submit-data', {
                 sender: sender,
                 receiver: null,
-                data: data,
+                data: ethers.utils.hexlify(ethers.utils.toUtf8Bytes(data)), // Convert data to hex string
                 signature: signature,
                 timestamp: timestamp,
                 gasLimit: 0

@@ -3,12 +3,26 @@ import axios from 'axios';
 
 const BlockExplorer = () => {
     const [blocks, setBlocks] = useState([]);
+    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         axios.get('http://localhost:6001/blocks')
-            .then(response => setBlocks(response.data))
-            .catch(error => console.error(error));
+            .then(response => {
+                console.log('API Response:', response.data);
+                setBlocks(Array.isArray(response.data) ? response.data : []);
+                setLoading(false);
+            })
+            .catch(error => {
+                console.error('Error fetching blocks:', error);
+                setLoading(false);
+               
+            });
     }, []);
+    
+
+    if (loading) {
+        return <div className="container mx-auto p-4">Loading...</div>;
+    }
 
     return (
         <div className="container mx-auto p-4">
@@ -20,7 +34,6 @@ const BlockExplorer = () => {
                         <p className="text-gray-700"><span className="font-bold">Hash:</span> {block.hash}</p>
                         <p className="text-gray-700"><span className="font-bold">Transactions:</span> {block.transactions.length}</p>
                         <p className="text-gray-700"><span className="font-bold">Timestamp:</span> {block.timestamp}</p>
-
                     </div>
                 ))}
             </div>
