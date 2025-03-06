@@ -1,8 +1,11 @@
-import crypto from 'crypto';
 import Block from './block.js';
 import Transaction from './transaction.js';
 import Balances from './balances.js';
 import { ethers } from 'ethers';
+import { Level } from 'level';
+
+const db = new Level('./nonces');
+
 class Blockchain {
     constructor() {
         this.chain = [this.createGenesisBlock()]; // Initialize the chain with the genesis block
@@ -12,6 +15,8 @@ class Blockchain {
         this.chainId = 43210;
         this.miningReward = 100 * 10 ** 18; // QRYPT tokens
         this.gasFee = 10 * 10 ** 18;
+        this.contracts = {};
+        this.logs = [];
     }
 
     // Create the genesis block
@@ -31,65 +36,118 @@ class Blockchain {
         this.chain.push(newBlock);
     }
 
-
-   // In blockchain.js, update the processSignedTransaction method
-async processSignedTransaction(signedTx) {
-    try {
-        const tx = ethers.Transaction.from(signedTx);
-        console.log('Processing transaction from:', tx.from);
-        
-        // Create transaction object
-        const transaction = new Transaction(
-            tx.from,
-            tx.to,
-            { amount: tx.value }, // Keep as BigInt, don't convert
-            tx.gasLimit,
-            tx.signature,
-            Date.now()
-        );
-    
-        // Calculate gas fee (gasPrice * gasLimit)
-        const gasFeeInWei = BigInt(tx.gasPrice) * BigInt(tx.gasLimit);
-        const totalAmountInWei = BigInt(tx.value) + gasFeeInWei;
-    
-        // Get sender balance in wei
-        const senderBalance = await Balances.getBalance(tx.from);
-        
-        console.log(`Sender balance: ${senderBalance}`);
-        console.log(`Total amount needed: ${totalAmountInWei}`);
-        
-        // Check if sender has sufficient balance
-        if (senderBalance < totalAmountInWei) {
-            throw new Error(`Insufficient balance: need ${totalAmountInWei}, have ${senderBalance}`);
+    // Add the incrementNonce function
+    async incrementNonce(address) {
+        try {
+            const normalizedAddress = address.toLowerCase();
+            let nonce = 0;
+            try {
+                const storedNonce = await db.get(`nonce:${normalizedAddress}`);
+                nonce = parseInt(storedNonce, 10);
+                if (isNaN(nonce)) {
+                    nonce = 0;
+                }
+            } catch (error) {
+                nonce = 0;
+            }
+            nonce += 1;
+            await db.put(`nonce:${normalizedAddress}`, nonce.toString());
+            return nonce;
+        } catch (error) {
+            console.error('Error incrementing nonce:', error);
+            throw error;
         }
-    
-        // Update balances
-        await Balances.updateBalance(tx.from, -totalAmountInWei);
-        await Balances.updateBalance(tx.to, BigInt(tx.value));
-        
-        // Add transaction to pending list
-        this.pendingTransactions.push(transaction);
-        
-        // Calculate hash and mine
-        const txHash = transaction.calculateHash();
-        await this.minePendingTransactions(tx.from);
-        
-        // Increment nonce - make sure to add this method to api.js
-        await incrementNonce(tx.from);
-        
-        return txHash;
-    } catch (error) {
-        console.error('Transaction processing error:', error);
-        throw error;
     }
-}
-// Check if a transaction is a duplicate
-        isDuplicateTransaction(transaction) {
+
+    // Modified to separate transaction processing from mining
+    async processSignedTransaction(signedTx) {
+        try {
+            const tx = ethers.Transaction.from(signedTx);
+            console.log('Processing transaction from:', tx.from);
+            
+            // Allow null or empty 'to' address for contract deployments
+            if (tx.to && (typeof tx.to !== 'string' || tx.to.trim() === '')) {
+                throw new Error('Invalid recipient address');
+            }
+            
+            // Robust data handling
+            let data = '';
+            if (tx.data) {
+                try {
+                    // Try different methods to convert data to string
+                    if (typeof tx.data === 'string') {
+                        // If it's already a string, use it
+                        data = tx.data;
+                    } else if (ethers.utils && ethers.utils.toUtf8String) {
+                        // Try converting hex to UTF-8 string
+                        data = ethers.utils.toUtf8String(tx.data);
+                    } else if (typeof tx.data === 'object') {
+                        // If it's an object, stringify it
+                        data = JSON.stringify(tx.data);
+                    } else {
+                        // Fallback to empty string
+                        data = '';
+                    }
+                } catch (conversionError) {
+                    console.error('Data conversion error:', conversionError);
+                    data = '';
+                }
+            }
+
+            // Create transaction object
+            const transaction = new Transaction(
+                tx.from,
+                tx.to,
+                data, // Use the processed data
+                tx.gasLimit,
+                tx.signature,
+                Date.now()
+            );
+        
+            // Calculate gas fee (gasPrice * gasLimit)
+            const gasFeeInWei = BigInt(tx.gasPrice) * BigInt(tx.gasLimit);
+            const totalAmountInWei = BigInt(tx.value || 0) + gasFeeInWei;
+        
+            // Get sender balance in wei
+            const senderBalance = await Balances.getBalance(tx.from);
+            
+            console.log(`Sender balance: ${senderBalance}`);
+            console.log(`Total amount needed: ${totalAmountInWei}`);
+            
+            // Check if sender has sufficient balance
+            if (senderBalance < totalAmountInWei) {
+                throw new Error(`Insufficient balance: need ${totalAmountInWei}, have ${senderBalance}`);
+            }
+        
+            // Update balances
+            await Balances.updateBalance(tx.from, -totalAmountInWei);
+            if (tx.to) {
+                await Balances.updateBalance(tx.to, BigInt(tx.value || 0));
+            }
+            
+            // Add transaction to pending list
+            this.pendingTransactions.push(transaction);
+            
+            // Calculate hash but DO NOT mine automatically
+            const txHash = transaction.calculateHash();
+            
+            // Increment nonce
+            await this.incrementNonce(tx.from);
+            
+            return txHash;
+        } catch (error) {
+            console.error('Transaction processing error:', error);
+            throw error;
+        }
+    }
+
+    // Check if a transaction is a duplicate
+    isDuplicateTransaction(transaction) {
         const dataHash = this.hashData(transaction.data);
         return this.dataHashes.has(dataHash);
     }
 
-    // Add a transaction to the pending transactions list
+    // Add a transaction to the pending transactions list without mining
     addTransaction(transaction) {
         if (!(transaction instanceof Transaction)) {
             throw new Error('Invalid transaction object');
@@ -114,7 +172,8 @@ async processSignedTransaction(signedTx) {
         console.log(`Transaction added. Data hash: ${dataHash}`);
         return true;
     }
-    // In Blockchain.js
+    
+    // Modified to separate transaction processing from mining
     async processTransaction(transaction) {
         const isValid = await transaction.isValid();
         if (!isValid) throw new Error('Invalid transaction signature');
@@ -132,32 +191,44 @@ async processSignedTransaction(signedTx) {
         return transaction.calculateHash();
     }
     
+    // Mining function that is explicitly called after data submission
     async minePendingTransactions(minerAddress) {
-    const transactions = [...this.pendingTransactions];
-    this.pendingTransactions = []; // Clear pending transactions
+        // Only mine if there are pending transactions
+        if (this.pendingTransactions.length === 0) {
+            console.log("No pending transactions to mine");
+            return null;
+        }
+        
+        console.log(`Mining block with ${this.pendingTransactions.length} transactions`);
+        
+        const transactions = [...this.pendingTransactions];
+        this.pendingTransactions = []; // Clear pending transactions
 
-    const block = new Block(
-        this.chain.length,
-        Date.now(),
-        transactions.map(tx => ({
-            ...tx,
-            amount: tx.amount.toString() // Convert BigInt to string
-        })),
-        this.getLatestBlock().hash
-    );
-    block.mineBlock(this.difficulty);
-    this.chain.push(block);
+        const block = new Block(
+            this.chain.length,
+            Date.now(),
+            transactions.map(tx => {
+                if (!(tx instanceof Transaction)) {
+                    // Properly instantiate Transaction objects
+                    return new Transaction(tx.sender, tx.receiver, tx.data, tx.gasLimit, tx.signature, tx.timestamp);
+                }
+                return tx;
+            }),
+            this.getLatestBlock().hash
+        );
+        
+        block.mineBlock(this.difficulty);
+        this.chain.push(block);
 
-    // Award mining reward
-    const reward = this.miningReward;
-    await Balances.updateBalance(minerAddress, reward);
+        // Award mining reward
+        const reward = this.miningReward;
+        await Balances.updateBalance(minerAddress, reward);
 
-    console.log(`Block mined by ${minerAddress} with reward: ${reward / 10 ** 18} QRYPT`);
-    console.log('Transactions in block:', block.transactions.map(tx => tx.calculateHash()));
-    console.log('Block added to blockchain:', block.hash);
-    return block.hash;
-}
-    
+        console.log(`Block mined by ${minerAddress} with reward: ${reward / 10 ** 18} QRYPT`);
+        console.log('Transactions in block:', block.transactions.map(tx => tx.calculateHash()));
+        console.log('Block added to blockchain:', block.hash);
+        return block.hash;
+    }
 
     // Replace the chain with a new one if it's valid and longer
     replaceChain(newChain) {
@@ -176,7 +247,6 @@ async processSignedTransaction(signedTx) {
         return true;
     }
 
-    
     // Validate the integrity of a given chain
     isChainValid(chain) {
         for (let i = 1; i < chain.length; i++) {
@@ -240,6 +310,15 @@ async processSignedTransaction(signedTx) {
             transactions.push(...block.transactions);
         }
         return transactions;
+    }
+
+    getGasPrice() {
+        return 10 * 10 ** 9; // Example: 10 Gwei
+    }
+    
+    // Check if there are pending transactions that need to be mined
+    hasPendingTransactions() {
+        return this.pendingTransactions.length > 0;
     }
 }
 

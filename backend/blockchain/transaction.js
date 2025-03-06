@@ -5,10 +5,15 @@ class Transaction {
     constructor(sender, receiver, data, gasLimit = 0, signature = null, timestamp) {
         this.sender = sender;
         this.receiver = receiver; // Optional for mining (can be null)
-        this.data = data;
+        this.data = typeof data === 'string' ? data : ethers.utils.toUtf8String(data); // Ensure data is a string
         this.gasLimit = gasLimit; // 0 for mining
         this.timestamp = timestamp || Date.now(); // Use provided timestamp or default
         this.signature = signature;
+
+        // Validate the receiver address
+        if (this.receiver && (typeof this.receiver !== 'string' || this.receiver.trim() === '')) {
+            throw new Error('Invalid recipient address');
+        }
     }
 
     calculateHash() {

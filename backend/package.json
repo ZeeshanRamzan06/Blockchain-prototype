@@ -15,6 +15,8 @@
     "@ethereumjs/evm": "^3.1.1",
     "@ethereumjs/trie": "^6.2.1",
     "@ethereumjs/tx": "^5.4.0",
+    "body-parser": "^1.20.3",
+    "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "elliptic": "^6.6.1",
     "ethers": "^6.13.5",
@@ -22,6 +24,7 @@
     "level": "^9.0.0",
     "leveldown": "^6.1.1",
     "levelup": "^5.1.1",
+    "rlp": "^3.0.0",
     "ws": "^8.18.1"
   }
 }

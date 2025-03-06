@@ -24,7 +24,6 @@ class P2PServer {
     // Handle new socket connections
     connectSocket(socket) {
         this.sockets.push(socket);
-        // console.log('Socket connected');
 
         // Handle incoming messages
         socket.on('message', (message) => {
@@ -36,35 +35,45 @@ class P2PServer {
         this.sendChain(socket);
     }
 
-    // Broadcast messages to all connected peers
+    // Custom replacer function to handle BigInt serialization
     broadcast(message) {
         this.sockets.forEach((socket) => socket.send(JSON.stringify(message)));
     }
 
     // Handle incoming messages
-   // In p2p.js, update handleMessage:
-handleMessage(data) {
-    switch (data.type) {
-        case 'CHAIN':
-            this.blockchain.replaceChain(data.chain);
-            break;
-        case 'TRANSACTION':
-            console.log('Received transaction:', data.transaction);
-            const transaction = new Transaction(
-                data.transaction.sender,
-                data.transaction.receiver,
-                data.transaction.data,
-                data.transaction.signature
-            );
-            this.blockchain.addTransaction(transaction);
-            break;
-        case 'RAW_TRANSACTION':
-            console.log('Received raw transaction from peer');
-            this.blockchain.processSignedTransaction(data.rawTx)
-                .catch(err => console.error('Error processing peer raw transaction:', err));
-            break;
+    handleMessage(data) {
+        switch (data.type) {
+            case 'CHAIN':
+                this.blockchain.replaceChain(data.chain);
+                break;
+            case 'TRANSACTION':
+                console.log('Received transaction:', data.transaction);
+                const transaction = new Transaction(
+                    data.transaction.sender,
+                    data.transaction.receiver,
+                    data.transaction.data,
+                    data.transaction.gasLimit,
+                    data.transaction.signature,
+                    data.transaction.timestamp || Date.now()
+                );
+                // Add transaction without mining
+                this.blockchain.addTransaction(transaction);
+                break;
+            case 'RAW_TRANSACTION':
+                console.log('Received raw transaction from peer');
+                // Process transaction without mining
+                this.blockchain.processSignedTransaction(data.rawTx)
+                    .catch(err => console.error('Error processing peer raw transaction:', err));
+                break;
+            case 'MINE_REQUEST':
+                console.log('Received mining request from peer');
+                if (data.minerAddress) {
+                    this.blockchain.minePendingTransactions(data.minerAddress)
+                        .catch(err => console.error('Error mining block after peer request:', err));
+                }
+                break;
+        }
     }
-}
 
     // Send the current blockchain to a socket
     sendChain(socket) {
@@ -79,6 +88,14 @@ handleMessage(data) {
         this.broadcast({
             type: 'TRANSACTION',
             transaction
+        });
+    }
+    
+    // Broadcast a mining request to all peers
+    broadcastMiningRequest(minerAddress) {
+        this.broadcast({
+            type: 'MINE_REQUEST',
+            minerAddress
         });
     }
 }
