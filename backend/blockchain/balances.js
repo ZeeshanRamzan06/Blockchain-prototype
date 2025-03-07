@@ -17,32 +17,26 @@ class Balances {
 
     static async getBalance(address) {
         await this.openDatabase(); // Ensure database is open
-        const normalizedAddress = address.toLowerCase(); // Normalize address
-    
         try {
-            const balance = await db.get(normalizedAddress);
+            const balance = await db.get(address);
             const num = BigInt(balance); // Use BigInt for large numbers
-            console.log(`Retrieved balance for ${normalizedAddress}: ${num}`);
+            console.log(`Retrieved balance for ${address}: ${num}`);
             return num; // Return raw wei value (no decimal conversion)
         } catch (error) {
-            console.log(`Balance not found for ${normalizedAddress}, returning 0`);
+            console.log(`Balance not found for ${address}, returning 0`);
             return BigInt(0); // Default to 0 wei
         }
     }
-    
 
     // Update the balance of a user
     static async updateBalance(address, amount) {
         await this.openDatabase(); // Ensure database is open
-    
         if (!address || typeof address !== 'string' || address.trim() === '') {
             throw new Error('Invalid address: cannot be null, undefined, or empty');
         }
-    
-        const normalizedAddress = address.toLowerCase(); // Convert to lowercase
-    
+        
         try {
-            const currentBalance = await this.getBalance(normalizedAddress);
+            const currentBalance = await this.getBalance(address);
             
             // Convert amount to BigInt if it's not already
             const amountBigInt = typeof amount === 'bigint' ? amount : BigInt(amount);
@@ -54,17 +48,16 @@ class Balances {
             if (newBalance < 0) {
                 throw new Error('Insufficient balance');
             }
-    
-            // Store the balance with lowercase address
-            await db.put(normalizedAddress, newBalance.toString());
-            console.log(`Updated balance for ${normalizedAddress}: ${newBalance}`);
+            
+            // Store the balance as a string representation of BigInt
+            await db.put(address, newBalance.toString());
+            console.log(`Updated balance for ${address}: ${newBalance}`);
             return newBalance;
         } catch (error) {
-            console.error(`Error updating balance for ${normalizedAddress}:`, error);
+            console.error(`Error updating balance for ${address}:`, error);
             throw error;
         }
     }
-    
 }
 
 export default Balances;

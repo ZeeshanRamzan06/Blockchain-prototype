@@ -5,15 +5,13 @@ import Transaction from "../blockchain/transaction.js";
 import Balances from "../blockchain/balances.js";
 import { ethers } from "ethers";
 import { Level } from "level";
-import { getAddress } from 'ethers'; 
-
+import cors from "cors";
 const db = new Level("./nonces");
 
 
 
 function replacer(key, value) {
     if (typeof value === 'bigint') {
-      return value.toString(); // Convert BigInt to string
     }
     return value; // Return other types as is
   }
@@ -180,27 +178,32 @@ function createNode(port, peers = []) {
             res.json(response(`0x${gasLimit.toString(16)}`)); // Return gas limit as a hex string
           }
           break;
-case "eth_getBalance": {
-    const [address] = params || [];
-    if (!address) {
-        res.status(400).json(errorResponse("Address required"));
-        return;
-    }
+        // In api.js, modify your eth_getBalance handler:
+        case "eth_getBalance":
+          {
+            const [address, block] = params || [];
+            if (!address) {
+              res.status(400).json(errorResponse("Address parameter required"));
+              return;
+            }
+            try {
+              const balance = await Balances.getBalance(address);
+              console.log(
+                `Balance for address ${address}: ${balance} (${balance.toString(
+                  16
+                )})`
+              );
 
-    const normalizedAddress = address.toLowerCase(); // Convert to lowercase for storage
-    const checksumAddress = getAddress(address); // Convert to checksum format for display
-
-    console.log(`🔍 Fetching balance for: ${normalizedAddress} (Checksum: ${checksumAddress})`);
-
-    const balance = await Balances.getBalance(normalizedAddress);
-    
-    // Return balance with the checksummed address for consistency in MetaMask
-    res.json(response({
-        address: checksumAddress,
-        balance: `0x${balance.toString(16)}` // Convert balance to hex format
-    }));
-    break;
-}
+              // Format as hex with 0x prefix and ensure it's a proper hex string
+              // This is critical for MetaMask compatibility
+              const hexBalance = `0x${balance.toString(16)}`;
+              res.json(response(hexBalance));
+            } catch (error) {
+              console.error("Error fetching balance:", error);
+              res.status(500).json(errorResponse("Error fetching balance"));
+            }
+          }
+          break;
           case "eth_getCode": {
             const [address] = params || [];
             if (!address) {

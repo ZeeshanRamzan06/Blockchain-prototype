@@ -37,8 +37,13 @@ class P2PServer {
 
     // Custom replacer function to handle BigInt serialization
     broadcast(message) {
-        this.sockets.forEach((socket) => socket.send(JSON.stringify(message)));
+        this.sockets.forEach((socket) => {
+            socket.send(JSON.stringify(message, (key, value) => 
+                typeof value === 'bigint' ? value.toString() : value
+            ));
+        });
     }
+    
 
     // Handle incoming messages
     handleMessage(data) {
@@ -80,16 +85,22 @@ class P2PServer {
         socket.send(JSON.stringify({
             type: 'CHAIN',
             chain: this.blockchain.chain
-        }));
+        }, (key, value) => 
+            typeof value === 'bigint' ? value.toString() : value
+        ));
     }
+    
 
     // Broadcast a transaction to all peers
     broadcastTransaction(transaction) {
         this.broadcast({
             type: 'TRANSACTION',
             transaction
-        });
+        }, (key, value) => 
+            typeof value === 'bigint' ? value.toString() : value
+        );
     }
+    
     
     // Broadcast a mining request to all peers
     broadcastMiningRequest(minerAddress) {
