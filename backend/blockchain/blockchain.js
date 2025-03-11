@@ -3,6 +3,8 @@ import Transaction from './transaction.js';
 import Balances from './balances.js';
 import { ethers } from 'ethers';
 import { Level } from 'level';
+import  RLP  from '@ethersproject/rlp';  
+import { hexlify } from '@ethersproject/bytes'; 
 
 const db = new Level('./nonces');
 
@@ -37,109 +39,111 @@ class Blockchain {
     }
 
     // Add the incrementNonce function
-    async incrementNonce(address) {
+    // Add the incrementNonce function
+async incrementNonce(address) {
+    try {
+        const normalizedAddress = address.toLowerCase();
+        let nonce = 0;
         try {
-            const normalizedAddress = address.toLowerCase();
-            let nonce = 0;
-            try {
-                const storedNonce = await db.get(`nonce:${normalizedAddress}`);
-                nonce = parseInt(storedNonce, 10);
-                if (isNaN(nonce)) {
-                    nonce = 0;
-                }
-            } catch (error) {
+            const storedNonce = await db.get(`nonce:${normalizedAddress}`);
+            nonce = parseInt(storedNonce, 10);
+            if (isNaN(nonce)) {
                 nonce = 0;
             }
-            nonce += 1;
-            await db.put(`nonce:${normalizedAddress}`, nonce.toString());
-            return nonce;
         } catch (error) {
-            console.error('Error incrementing nonce:', error);
-            throw error;
+            nonce = 0;
         }
+        nonce += 1;
+        await db.put(`nonce:${normalizedAddress}`, nonce.toString());
+        return nonce;
+    } catch (error) {
+        console.error('Error incrementing nonce:', error);
+        throw error;
     }
+}
 
-    // Modified to separate transaction processing from mining
-    async processSignedTransaction(signedTx) {
-        try {
-            const tx = ethers.Transaction.from(signedTx);
-            console.log('Processing transaction from:', tx.from);
-            
-            // Allow null or empty 'to' address for contract deployments
-            if (tx.to && (typeof tx.to !== 'string' || tx.to.trim() === '')) {
-                throw new Error('Invalid recipient address');
-            }
-            
-            // Robust data handling
-            let data = '';
-            if (tx.data) {
-                try {
-                    // Try different methods to convert data to string
-                    if (typeof tx.data === 'string') {
-                        // If it's already a string, use it
-                        data = tx.data;
-                    } else if (ethers.utils && ethers.utils.toUtf8String) {
-                        // Try converting hex to UTF-8 string
-                        data = ethers.utils.toUtf8String(tx.data);
-                    } else if (typeof tx.data === 'object') {
-                        // If it's an object, stringify it
-                        data = JSON.stringify(tx.data);
-                    } else {
-                        // Fallback to empty string
-                        data = '';
-                    }
-                } catch (conversionError) {
-                    console.error('Data conversion error:', conversionError);
-                    data = '';
-                }
-            }
-
-            // Create transaction object
-            const transaction = new Transaction(
-                tx.from,
-                tx.to,
-                data, // Use the processed data
-                tx.gasLimit,
-                tx.signature,
-                Date.now()
-            );
+    // Add this to your blockchain.js class
+async processSignedTransaction(signedTx) {
+    try {
+        const tx = ethers.Transaction.from(signedTx);
+        console.log('Processing transaction from:', tx.from);
         
-            // Calculate gas fee (gasPrice * gasLimit)
-            const gasFeeInWei = BigInt(tx.gasPrice) * BigInt(tx.gasLimit);
-            const totalAmountInWei = BigInt(tx.value || 0) + gasFeeInWei;
+        // Flag to check if this is a contract deployment (no 'to' address)
+        const isContractDeployment = !tx.to;
+        let contractAddress = null;
         
-            // Get sender balance in wei
-            const senderBalance = await Balances.getBalance(tx.from);
-            
-            console.log(`Sender balance: ${senderBalance}`);
-            console.log(`Total amount needed: ${totalAmountInWei}`);
-            
-            // Check if sender has sufficient balance
-            if (senderBalance < totalAmountInWei) {
-                throw new Error(`Insufficient balance: need ${totalAmountInWei}, have ${senderBalance}`);
-            }
+        // Create transaction object
+        const transaction = new Transaction(
+            tx.from,
+            tx.to,
+            tx.data || '', // Use the processed data
+            tx.gasLimit,
+            tx.signature,
+            Date.now()
+        );
+    
+        // Calculate gas fee
+        const gasFeeInWei = BigInt(tx.gasPrice) * BigInt(tx.gasLimit);
+        const totalAmountInWei = BigInt(tx.value || 0) + gasFeeInWei;
+    
+        // Get sender balance in wei
+        const senderBalance = await Balances.getBalance(tx.from);
         
-            // Update balances
-            await Balances.updateBalance(tx.from, -totalAmountInWei);
-            if (tx.to) {
-                await Balances.updateBalance(tx.to, BigInt(tx.value || 0));
-            }
+        console.log(`Sender balance: ${senderBalance}`);
+        console.log(`Total amount needed: ${totalAmountInWei}`);
+        
+        // Check if sender has sufficient balance
+        if (senderBalance < totalAmountInWei) {
+            throw new Error(`Insufficient balance: need ${totalAmountInWei}, have ${senderBalance}`);
+        }
+    
+        // Update balances
+        await Balances.updateBalance(tx.from, -totalAmountInWei);
+        
+        if (isContractDeployment) {
+            // This is a contract deployment
+            // Generate contract address using sender address and nonce
+            const nonce = await this.incrementNonce(tx.from);
+            const rlpEncoded = RLP.encode([tx.from, hexlify(nonce - 1)]);
+            contractAddress = ethers.keccak256(rlpEncoded).slice(26);
+            contractAddress = ethers.getAddress('0x' + contractAddress);
             
-            // Add transaction to pending list
-            this.pendingTransactions.push(transaction);
+            console.log(`Contract deployed at address: ${contractAddress}`);
             
-            // Calculate hash but DO NOT mine automatically
-            const txHash = transaction.calculateHash();
+            // Store contract bytecode for later use
+            this.contracts[contractAddress] = {
+                bytecode: tx.data,
+                deployer: tx.from,
+                deployedAt: Date.now(),
+                storage: {}
+            };
             
-            // Increment nonce
+            // Set the 'to' field of the transaction to the new contract address
+            transaction.receiver = contractAddress;
+        } else if (tx.to) {
+            await Balances.updateBalance(tx.to, BigInt(tx.value || 0));
+        }
+        
+        // Add transaction to pending list
+        this.pendingTransactions.push(transaction);
+        
+        // Calculate hash
+        const txHash = transaction.calculateHash();
+        
+        // Increment nonce if not already done during contract deployment
+        if (!isContractDeployment) {
             await this.incrementNonce(tx.from);
-            
-            return txHash;
-        } catch (error) {
-            console.error('Transaction processing error:', error);
-            throw error;
         }
+        
+        return {
+            txHash,
+            contractAddress: contractAddress
+        };
+    } catch (error) {
+        console.error('Transaction processing error:', error);
+        throw error;
     }
+}
 
     // Check if a transaction is a duplicate
     isDuplicateTransaction(transaction) {
@@ -231,21 +235,38 @@ class Blockchain {
     }
 
     // Replace the chain with a new one if it's valid and longer
-    replaceChain(newChain) {
-        if (newChain.length <= this.chain.length) {
-            // console.log('Received chain is not longer than the current chain.');
-            return false;
+   // Replace the chain with a new one if it's valid and longer
+replaceChain(newChain) {
+    // Convert plain block objects back into Block instances
+    const reconstructedChain = newChain.map(block => {
+        if (block instanceof Block) {
+            return block; // If it's already a Block instance, use it as is
         }
+        // Create a new Block instance from the plain object
+        const newBlock = new Block(
+            block.index,
+            block.timestamp,
+            block.transactions,
+            block.previousHash
+        );
+        // Set additional properties that aren't passed to the constructor
+        newBlock.hash = block.hash;
+        newBlock.nonce = block.nonce;
+        newBlock.minerReward = block.minerReward;
+        return newBlock;
+    });
 
-        if (!this.isChainValid(newChain)) {
-            console.log('Received chain is invalid.');
-            return false;
-        }
-
-        console.log('Replacing the current chain with the new chain.');
-        this.chain = newChain;
-        return true;
+    if (reconstructedChain.length <= this.chain.length) {
+        return false;
     }
+
+    if (!this.isChainValid(reconstructedChain)) {
+        console.log('Received chain is invalid.');
+        return false;
+    }
+    this.chain = reconstructedChain;
+    return true;
+}
 
     // Validate the integrity of a given chain
     isChainValid(chain) {

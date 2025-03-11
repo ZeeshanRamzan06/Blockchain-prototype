@@ -5,30 +5,26 @@ import Transaction from "../blockchain/transaction.js";
 import Balances from "../blockchain/balances.js";
 import { ethers } from "ethers";
 import { Level } from "level";
-import cors from "cors";
 const db = new Level("./nonces");
 
 
 
 function replacer(key, value) {
-    if (typeof value === 'bigint') {
-    }
-    return value; // Return other types as is
+  if (typeof value === 'bigint') {
+      return value.toString(); // Convert BigInt to string
   }
+  return value; // Return other types as is
+}
 function createNode(port, peers = []) {
   const blockchain = new Blockchain();
   const p2pServer = new P2PServer(blockchain);
   p2pServer.listen(port);
   peers.forEach((peer) => p2pServer.connectToPeer(peer));
 
-  console.log(`Node running on port ${port}`);
-
   const app = express();
 
-  // Increase JSON payload size limit to 50MB
-  app.use(express.json({ limit: "50mb" }));
-  // Increase URL-encoded payload size limit
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  // Add this line to parse JSON bodies
+  app.use(express.json());
 
   // CORS middleware
   app.use((req, res, next) => {
@@ -42,36 +38,32 @@ function createNode(port, peers = []) {
     next();
   });
 
-  // Helper function to check if an address is a contract
-  async function isContractAddress(address) {
-    // In your custom network, all addresses are non-contract addresses
-    return false;
-  }
 
-  // Helper function to get the transaction count (nonce) for an address
-  async function getTransactionCount(address) {
-    try {
+
+ // Helper function to get the transaction count (nonce) for an address
+async function getTransactionCount(address) {
+  try {
+      const normalizedAddress = address.toLowerCase();
       let nonce = 0;
       try {
-        const normalizedAddress = address.toLowerCase();
-        const storedNonce = await db.get(`nonce:${normalizedAddress}`);
-        nonce = parseInt(storedNonce, 10);
-        if (isNaN(nonce)) {
-          console.error(
-            `Invalid nonce value for ${normalizedAddress}: ${storedNonce}`
-          );
-          nonce = 0;
-        }
+          const storedNonce = await db.get(`nonce:${normalizedAddress}`);
+          nonce = parseInt(storedNonce, 10);
+          if (isNaN(nonce)) {
+              console.error(
+                  `Invalid nonce value for ${normalizedAddress}: ${storedNonce}`
+              );
+              nonce = 0;
+          }
       } catch (error) {
-        nonce = 0;
+          nonce = 0;
       }
-      console.log(`Nonce for address ${address}: ${nonce}`);
+      console.log(`Nonce for address ${normalizedAddress}: ${nonce}`);
       return nonce;
-    } catch (error) {
+  } catch (error) {
       console.error("Error fetching nonce:", error);
       return 0;
-    }
   }
+}
 
   // Add a function to increment nonce after transaction
   async function incrementNonce(address) {
@@ -212,18 +204,22 @@ function createNode(port, peers = []) {
             }
         
             console.log(`🔍 Searching for contract at address: ${address}`);
-            console.log('📜 Available Contracts:', blockchain.contracts);
-        
-            if (blockchain.contracts[address]) {
-                console.log(`✅ Contract found: ${address}`);
+            
+            // Normalize the address to avoid case-sensitivity issues
+            const normalizedAddress = address.toLowerCase();
+            
+            // Check for contracts with both the normalized and original address
+            const contract = blockchain.contracts[normalizedAddress] || blockchain.contracts[address];
+            
+            if (contract) {
+                console.log(`✅ Contract found at: ${address}`);
+                res.json(response(contract.bytecode || "0x"));
             } else {
-                console.log(`❌ Contract not found: ${address}`);
+                console.log(`❌ Contract not found at: ${address}`);
+                res.json(response("0x"));
             }
-        
-            res.json(response(blockchain.contracts[address] ? blockchain.contracts[address].bytecode : "0x"));
             break;
         }
-        
         case "eth_getTransactionCount":
           {
             const [address, blockTag] = params || [];
@@ -269,99 +265,177 @@ function createNode(port, peers = []) {
             }
           }
           break;
+
           case "eth_sendRawTransaction":
-            {
-                const [signedTx] = params || [];
-                if (!signedTx) {
-                    res
-                        .status(400)
-                        .json(errorResponse("Signed transaction data required"));
-                    return;
-                }
-                try {
-                    console.log("Received raw transaction:", signedTx);
-                    
-                    // Process transaction without mining
-                    const txHash = await blockchain.processSignedTransaction(
-                        signedTx
-                    );
-                    console.log("Transaction processed with hash:", txHash);
-                    
-                    // Make sure response is properly formatted for MetaMask
-                    res.json(response(txHash));
-          
-                    // Broadcast to other nodes
-                    p2pServer.broadcast({
-                        type: "RAW_TRANSACTION",
-                        rawTx: signedTx,
-                    });
-                    
-                    // Note: We do NOT automatically mine a block here
-                } catch (error) {
-                    console.error("Error processing signed transaction:", error);
-                    res.status(500).json(errorResponse(error.message));
-                }
-            }
-            break;
-          
-          case "eth_getTransactionReceipt":
-            {
-              const [txHash] = params || [];
-              if (!txHash) {
-                res.status(400).json(errorResponse("Transaction hash parameter required"));
-                return;
-              }
-          
-              try {
-                // Find the transaction in the blockchain
-                let receipt = null;
-                for (const block of blockchain.chain) {
-                  for (const tx of block.transactions) {
-                    if (tx.calculateHash() === txHash) {
-                      receipt = {
-                        transactionHash: txHash,
-                        blockHash: block.hash,
-                        blockNumber: toHex(block.index),
-                        gasUsed: toHex(21000), // Example: Fixed gas used
-                        status: "0x1", // Example: Assume all transactions are successful
-                        logs: [], // Example: No logs
-                        logsBloom: "0x00", // Example: No logs
-                        cumulativeGasUsed: toHex(21000), // Example: Fixed cumulative gas used
-                        contractAddress: tx.receiver || null, // Return contract address if it's a contract deployment
-                      };
-                      break;
+{
+    const [signedTx] = params || [];
+    if (!signedTx) {
+        res
+            .status(400)
+            .json(errorResponse("Signed transaction data required"));
+        return;
+    }
+    try {
+        console.log("Received raw transaction:", signedTx);
+        
+        // Process transaction without mining
+        const result = await blockchain.processSignedTransaction(signedTx);
+        console.log("Transaction processed with hash:", result.txHash);
+        
+        if (result.contractAddress) {
+            console.log("Contract deployed at:", result.contractAddress);
+            
+            // Add an event to the logs for contract creation
+            blockchain.logs.push({
+                address: result.contractAddress,
+                blockNumber: `0x${blockchain.chain.length.toString(16)}`,
+                transactionHash: result.txHash,
+                transactionIndex: "0x0",
+                blockHash: blockchain.getLatestBlock().hash,
+                logIndex: "0x0",
+                data: "0x", // No data for creation event
+                topics: [
+                    "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0" // Example topic for contract creation
+                ]
+            });
+        }
+        
+        // Make sure response is properly formatted for MetaMask
+        res.json(response(result.txHash));
+
+        // Broadcast to other nodes
+        p2pServer.broadcast({
+            type: "RAW_TRANSACTION",
+            rawTx: signedTx,
+        });
+        
+        // Note: We do NOT automatically mine a block here
+    } catch (error) {
+        console.error("Error processing signed transaction:", error);
+        res.status(500).json(errorResponse(error.message));
+    }
+}
+break;
+// Improve eth_getTransactionReceipt to correctly report contract addresses
+case "eth_getTransactionReceipt":
+{
+    const [txHash] = params || [];
+    if (!txHash) {
+        res.status(400).json(errorResponse("Transaction hash parameter required"));
+        return;
+    }
+
+    try {
+        // Find the transaction in the blockchain
+        let receipt = null;
+        let contractAddress = null;
+        
+        // Check pending transactions first
+        for (const tx of blockchain.pendingTransactions) {
+            if (tx.calculateHash() === txHash) {
+                // For pending transactions, we create a partial receipt
+                receipt = {
+                    transactionHash: txHash,
+                    blockHash: null,
+                    blockNumber: null,
+                    gasUsed: toHex(21000),
+                    status: "0x1", 
+                    logs: [],
+                    logsBloom: "0x00",
+                    cumulativeGasUsed: toHex(21000),
+                    contractAddress: null
+                };
+                
+                // If this transaction has no 'to' address, it might be a contract creation
+                if (!tx.receiver && tx.data) {
+                    // Find if we have stored a contract address for this transaction
+                    for (const [address, contract] of Object.entries(blockchain.contracts)) {
+                        if (contract.deployedByTx === txHash) {
+                            contractAddress = address;
+                            receipt.contractAddress = address;
+                            break;
+                        }
                     }
-                  }
-                  if (receipt) break;
                 }
-          
-                if (receipt) {
-                  res.json(response(receipt));
-                } else {
-                  res.status(404).json(errorResponse("Transaction not found"));
-                }
-              } catch (error) {
-                console.error("Error fetching transaction receipt:", error);
-                res.status(500).json(errorResponse("Server error"));
-              }
+                break;
             }
-            break;
-            case "eth_call": {
-              const [txCall] = params || [];
-              if (!txCall.to) {
-                  res.status(400).json(errorResponse("Contract address required"));
-                  return;
-              }
-          
-              if (!blockchain.contracts[txCall.to]) {
-                  res.json(response("0x"));
-                  return;
-              }
-          
-              const result = executeEVM(blockchain.contracts[txCall.to].bytecode);
-              res.json(response(result));
-              break;
-          }
+        }
+        
+        // If not found in pending, check mined blocks
+        if (!receipt) {
+            for (const block of blockchain.chain) {
+                for (const tx of block.transactions) {
+                    if (tx.calculateHash() === txHash) {
+                        receipt = {
+                            transactionHash: txHash,
+                            blockHash: block.hash,
+                            blockNumber: toHex(block.index),
+                            gasUsed: toHex(21000),
+                            status: "0x1",
+                            logs: [],
+                            logsBloom: "0x00",
+                            cumulativeGasUsed: toHex(21000),
+                            contractAddress: null
+                        };
+                        
+                        // Check if this was a contract deployment
+                        if (!tx.receiver && tx.data) {
+                            // Look up the contract address
+                            for (const [address, contract] of Object.entries(blockchain.contracts)) {
+                                if (contract.deployedByTx === txHash) {
+                                    contractAddress = address;
+                                    receipt.contractAddress = address;
+                                    break;
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+                if (receipt) break;
+            }
+        }
+
+        if (receipt) {
+            res.json(response(receipt));
+        } else {
+            res.status(404).json(errorResponse("Transaction not found"));
+        }
+    } catch (error) {
+        console.error("Error fetching transaction receipt:", error);
+        res.status(500).json(errorResponse("Server error"));
+    }
+}
+break;
+         
+case "eth_call": {
+  const [tx] = params || [];
+
+  if (!tx || !tx.to) {
+      res.status(400).json(errorResponse("Contract address required"));
+      return;
+  }
+
+  const contract = blockchain.contracts[tx.to];
+  if (!contract) {
+      res.status(400).json(errorResponse("Contract not found"));
+      return;
+  }
+
+  // ✅ Decode the method being called
+  const method = tx.data.slice(0, 10); // First 4 bytes (function selector)
+
+  if (method === "0x70a08231") { // ERC-20 balanceOf(address)
+      const address = "0x" + tx.data.slice(34); // Extract address
+      const balance = contract.storage[address] || "0x0"; // Get stored balance
+      res.json(response(balance));
+  } else {
+      res.status(400).json(errorResponse("Method not supported"));
+  }
+  break;
+}
+
+
         case "eth_getBlockByNumber":
           {
             const [blockNumber, includeTx] = params || [];
@@ -464,16 +538,21 @@ function createNode(port, peers = []) {
 
     console.log('Received request:', req.body);
 
-    const transaction = new Transaction(
-        sender,
-        receiver,
-        ethers.utils.toUtf8String(data), // Convert hex string back to UTF-8 string
-        gasLimit,
-        signature,
-        timestamp
-    );
-
     try {
+        const aiResponse = await checkDataUniqueness(data);
+        if (aiResponse.uniqueness_score <= 50) {
+            return res.status(400).json({ error: 'Data uniqueness score is too low' });
+        }
+
+        const transaction = new Transaction(
+            sender,
+            receiver,
+            ethers.utils.toUtf8String(data), // Convert hex string back to UTF-8 string
+            gasLimit,
+            signature,
+            timestamp
+        );
+
         // Process the transaction without mining
         const txHash = await blockchain.processTransaction(transaction);
         p2pServer.broadcastTransaction(transaction);
@@ -488,7 +567,6 @@ function createNode(port, peers = []) {
         res.status(400).json({ error: error.message });
     }
 });
-
 
 app.post('/mine-block', async (req, res) => {
   const { minerAddress } = req.body;
@@ -536,8 +614,9 @@ app.post('/mine-block', async (req, res) => {
   }
 });
 
-app.get("/pending-transactions", (req, res) => {
-  res.json(blockchain.pendingTransactions);
+app.get("/transactions", (req, res) => {
+  const transactions = blockchain.getAllTransactions();
+  res.json(transactions.map(tx => JSON.parse(JSON.stringify(tx, replacer))));
 });
 
 
@@ -555,7 +634,32 @@ app.get("/blocks", (req, res) => {
 });
 
 app.get("/transactions", (req, res) => {
-  res.json(JSON.stringify(blockchain.getAllTransactions(), replacer));
+  res.json(blockchain.getAllTransactions(), replacer);
+});
+
+// Add this to your Express app in api.js
+app.get("/contract/:address", (req, res) => {
+  try {
+      const { address } = req.params;
+      const normalizedAddress = address.toLowerCase();
+      
+      // Check for contract with both normalized and original address
+      const contract = blockchain.contracts[normalizedAddress] || blockchain.contracts[address];
+      
+      if (contract) {
+          res.json({
+              address,
+              deployedBy: contract.deployer,
+              deployedAt: new Date(contract.deployedAt).toISOString(),
+              hasCode: !!contract.bytecode
+          });
+      } else {
+          res.status(404).json({ error: "Contract not found" });
+      }
+  } catch (error) {
+      console.error("Error fetching contract info:", error);
+      res.status(500).json({ error: error.message });
+  }
 });
 
   app.get("/balance/:address", async (req, res) => {

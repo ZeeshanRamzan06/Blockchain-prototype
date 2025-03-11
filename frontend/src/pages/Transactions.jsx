@@ -40,7 +40,7 @@ const Transactions = () => {
                     <div key={index} className="bg-white p-4 rounded-lg shadow-md">
                         <p className="text-gray-700"><span className="font-bold">Sender:</span> {tx.sender}</p>
                         <p className="text-gray-700"><span className="font-bold">Receiver:</span> {tx.receiver}</p>
-                        <p className="text-gray-700"><span className="font-bold">Data:</span> {typeof tx.data === 'object' ? JSON.stringify(tx.data) : tx.data}</p>
+                        <p className="text-gray-700"><span className="font-bold">Data:</span> {typeof tx.data === 'object' ? JSON.stringify(tx.data) : String(tx.data)}</p>
                         <p className="text-gray-700"><span className="font-bold">Timestamp:</span> {new Date(tx.timestamp).toLocaleString()}</p>
                     </div>
                 ))}

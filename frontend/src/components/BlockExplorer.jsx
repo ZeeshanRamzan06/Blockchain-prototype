@@ -32,8 +32,11 @@ const BlockExplorer = () => {
                     <div key={block.hash} className="bg-white p-4 rounded-lg shadow-md">
                         <p className="text-gray-700"><span className="font-bold">Index:</span> {block.index}</p>
                         <p className="text-gray-700"><span className="font-bold">Hash:</span> {block.hash}</p>
+                        <p className="text-gray-700"><span className="font-bold">Previous Hash:</span> {block.previousHash}</p>
                         <p className="text-gray-700"><span className="font-bold">Transactions:</span> {block.transactions.length}</p>
                         <p className="text-gray-700"><span className="font-bold">Timestamp:</span> {block.timestamp}</p>
+                        <p className="text-gray-700"><span className="font-bold">Nonce:</span> {block.nonce}</p>
+                        <p className="text-gray-700"><span className="font-bold">Miner Reward:</span> {block.minerReward}</p>
                     </div>
                 ))}
             </div>
