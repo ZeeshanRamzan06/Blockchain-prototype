@@ -63,87 +63,88 @@ async incrementNonce(address) {
 }
 
     // Add this to your blockchain.js class
-async processSignedTransaction(signedTx) {
-    try {
-        const tx = ethers.Transaction.from(signedTx);
-        console.log('Processing transaction from:', tx.from);
-        
-        // Flag to check if this is a contract deployment (no 'to' address)
-        const isContractDeployment = !tx.to;
-        let contractAddress = null;
-        
-        // Create transaction object
-        const transaction = new Transaction(
-            tx.from,
-            tx.to,
-            tx.data || '', // Use the processed data
-            tx.gasLimit,
-            tx.signature,
-            Date.now()
-        );
-    
-        // Calculate gas fee
-        const gasFeeInWei = BigInt(tx.gasPrice) * BigInt(tx.gasLimit);
-        const totalAmountInWei = BigInt(tx.value || 0) + gasFeeInWei;
-    
-        // Get sender balance in wei
-        const senderBalance = await Balances.getBalance(tx.from);
-        
-        console.log(`Sender balance: ${senderBalance}`);
-        console.log(`Total amount needed: ${totalAmountInWei}`);
-        
-        // Check if sender has sufficient balance
-        if (senderBalance < totalAmountInWei) {
-            throw new Error(`Insufficient balance: need ${totalAmountInWei}, have ${senderBalance}`);
-        }
-    
-        // Update balances
-        await Balances.updateBalance(tx.from, -totalAmountInWei);
-        
-        if (isContractDeployment) {
-            // This is a contract deployment
-            // Generate contract address using sender address and nonce
-            const nonce = await this.incrementNonce(tx.from);
-            const rlpEncoded = RLP.encode([tx.from, hexlify(nonce - 1)]);
-            contractAddress = ethers.keccak256(rlpEncoded).slice(26);
-            contractAddress = ethers.getAddress('0x' + contractAddress);
+    async processSignedTransaction(signedTx) {
+        try {
+            const tx = ethers.Transaction.from(signedTx);
+            console.log('Processing transaction from:', tx.from);
             
-            console.log(`Contract deployed at address: ${contractAddress}`);
+            // Flag to check if this is a contract deployment (no 'to' address)
+            const isContractDeployment = !tx.to;
+            let contractAddress = null;
             
-            // Store contract bytecode for later use
-            this.contracts[contractAddress] = {
-                bytecode: tx.data,
-                deployer: tx.from,
-                deployedAt: Date.now(),
-                storage: {}
+            // Create transaction object
+            const transaction = new Transaction(
+                tx.from,
+                tx.to,
+                tx.data || '',
+                tx.gasLimit,
+                tx.signature,
+                Date.now()
+            );
+        
+            // Calculate gas fee
+            const gasFeeInWei = BigInt(tx.gasPrice) * BigInt(tx.gasLimit);
+            const totalAmountInWei = BigInt(tx.value || 0) + gasFeeInWei;
+        
+            // Get sender balance in wei
+            const senderBalance = await Balances.getBalance(tx.from);
+            
+            console.log(`Sender balance: ${senderBalance}`);
+            console.log(`Total amount needed: ${totalAmountInWei}`);
+            
+            // Check if sender has sufficient balance
+            if (senderBalance < totalAmountInWei) {
+                throw new Error(`Insufficient balance: need ${totalAmountInWei}, have ${senderBalance}`);
+            }
+        
+            // Update balances
+            await Balances.updateBalance(tx.from, -totalAmountInWei);
+            
+            // Calculate transaction hash first so we can reference it
+            const txHash = transaction.calculateHash();
+            
+            if (isContractDeployment) {
+                // This is a contract deployment
+                // Generate contract address using sender address and nonce
+                const nonce = await this.incrementNonce(tx.from);
+                const rlpEncoded = RLP.encode([tx.from, hexlify(nonce - 1)]);
+                contractAddress = ethers.keccak256(rlpEncoded).slice(26);
+                contractAddress = ethers.getAddress('0x' + contractAddress);
+                
+                console.log(`Contract deployed at address: ${contractAddress}`);
+                
+                // Store contract bytecode for later use - WITH THE TRANSACTION HASH
+                this.contracts[contractAddress] = {
+                    bytecode: tx.data,
+                    deployer: tx.from,
+                    deployedAt: Date.now(),
+                    deployedByTx: txHash, // Add this line to link tx and contract
+                    storage: {}
+                };
+                
+                // Set the 'to' field of the transaction to the new contract address
+                transaction.receiver = contractAddress;
+            } else if (tx.to) {
+                await Balances.updateBalance(tx.to, BigInt(tx.value || 0));
+            }
+            
+            // Add transaction to pending list
+            this.pendingTransactions.push(transaction);
+            
+            // Increment nonce if not already done during contract deployment
+            if (!isContractDeployment) {
+                await this.incrementNonce(tx.from);
+            }
+            
+            return {
+                txHash,
+                contractAddress: contractAddress
             };
-            
-            // Set the 'to' field of the transaction to the new contract address
-            transaction.receiver = contractAddress;
-        } else if (tx.to) {
-            await Balances.updateBalance(tx.to, BigInt(tx.value || 0));
+        } catch (error) {
+            console.error('Transaction processing error:', error);
+            throw error;
         }
-        
-        // Add transaction to pending list
-        this.pendingTransactions.push(transaction);
-        
-        // Calculate hash
-        const txHash = transaction.calculateHash();
-        
-        // Increment nonce if not already done during contract deployment
-        if (!isContractDeployment) {
-            await this.incrementNonce(tx.from);
-        }
-        
-        return {
-            txHash,
-            contractAddress: contractAddress
-        };
-    } catch (error) {
-        console.error('Transaction processing error:', error);
-        throw error;
     }
-}
 
     // Check if a transaction is a duplicate
     isDuplicateTransaction(transaction) {

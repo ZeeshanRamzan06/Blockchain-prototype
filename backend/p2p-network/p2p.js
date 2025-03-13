@@ -47,36 +47,44 @@ class P2PServer {
 
     // Handle incoming messages
     handleMessage(data) {
-        switch (data.type) {
-            case 'CHAIN':
-                this.blockchain.replaceChain(data.chain);
-                break;
-            case 'TRANSACTION':
-                console.log('Received transaction:', data.transaction);
-                const transaction = new Transaction(
-                    data.transaction.sender,
-                    data.transaction.receiver,
-                    data.transaction.data,
-                    data.transaction.gasLimit,
-                    data.transaction.signature,
-                    data.transaction.timestamp || Date.now()
-                );
-                // Add transaction without mining
-                this.blockchain.addTransaction(transaction);
-                break;
-            case 'RAW_TRANSACTION':
-                console.log('Received raw transaction from peer');
-                // Process transaction without mining
-                this.blockchain.processSignedTransaction(data.rawTx)
-                    .catch(err => console.error('Error processing peer raw transaction:', err));
-                break;
-            case 'MINE_REQUEST':
-                console.log('Received mining request from peer');
-                if (data.minerAddress) {
-                    this.blockchain.minePendingTransactions(data.minerAddress)
-                        .catch(err => console.error('Error mining block after peer request:', err));
-                }
-                break;
+        try {
+            switch (data.type) {
+                case 'CHAIN':
+                    this.blockchain.replaceChain(data.chain);
+                    break;
+                case 'TRANSACTION':
+                    console.log('Received transaction:', data.transaction);
+                    const transaction = new Transaction(
+                        data.transaction.sender,
+                        data.transaction.receiver,
+                        data.transaction.data,
+                        data.transaction.gasLimit,
+                        data.transaction.signature,
+                        data.transaction.timestamp || Date.now()
+                    );
+                    // Add transaction without mining
+                    this.blockchain.addTransaction(transaction);
+                    break;
+                case 'RAW_TRANSACTION':
+                    console.log('Received raw transaction from peer');
+                    if (!data.rawTx) {
+                        console.error('Invalid raw transaction data');
+                        return;
+                    }
+                    // Process transaction without mining
+                    this.blockchain.processSignedTransaction(data.rawTx)
+                        .catch(err => console.error('Error processing peer raw transaction:', err));
+                    break;
+                case 'MINE_REQUEST':
+                    console.log('Received mining request from peer');
+                    if (data.minerAddress) {
+                        this.blockchain.minePendingTransactions(data.minerAddress)
+                            .catch(err => console.error('Error mining block after peer request:', err));
+                    }
+                    break;
+            }
+        } catch (error) {
+            console.error('Error handling message:', error);
         }
     }
 

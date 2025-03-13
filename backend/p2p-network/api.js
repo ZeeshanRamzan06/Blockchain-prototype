@@ -5,9 +5,9 @@ import Transaction from "../blockchain/transaction.js";
 import Balances from "../blockchain/balances.js";
 import { ethers } from "ethers";
 import { Level } from "level";
+import axios from 'axios';
+
 const db = new Level("./nonces");
-
-
 
 function replacer(key, value) {
   if (typeof value === 'bigint') {
@@ -15,6 +15,7 @@ function replacer(key, value) {
   }
   return value; // Return other types as is
 }
+
 function createNode(port, peers = []) {
   const blockchain = new Blockchain();
   const p2pServer = new P2PServer(blockchain);
@@ -24,7 +25,8 @@ function createNode(port, peers = []) {
   const app = express();
 
   // Add this line to parse JSON bodies
-  app.use(express.json());
+  app.use(express.json({ limit: '100mb' })); // Increase JSON payload limit
+  app.use(express.urlencoded({ limit: '100mb', extended: true })); // Increase URL-encoded payload limit
 
   // CORS middleware
   app.use((req, res, next) => {
@@ -198,25 +200,26 @@ async function getTransactionCount(address) {
           break;
           case "eth_getCode": {
             const [address] = params || [];
-            if (!address) {
-                res.status(400).json(errorResponse("Address required"));
+            if (!address || address === "0x") {
+                res.json(response("0x")); // Return empty bytecode for invalid address
                 return;
             }
         
-            console.log(`🔍 Searching for contract at address: ${address}`);
-            
-            // Normalize the address to avoid case-sensitivity issues
-            const normalizedAddress = address.toLowerCase();
-            
-            // Check for contracts with both the normalized and original address
-            const contract = blockchain.contracts[normalizedAddress] || blockchain.contracts[address];
-            
-            if (contract) {
-                console.log(`✅ Contract found at: ${address}`);
-                res.json(response(contract.bytecode || "0x"));
-            } else {
-                console.log(`❌ Contract not found at: ${address}`);
-                res.json(response("0x"));
+            try {
+                const normalizedAddress = ethers.getAddress(address); // Validate address format
+                console.log(`🔍 Searching for contract at address: ${normalizedAddress}`);
+                
+                const contract = blockchain.contracts[normalizedAddress];
+                if (contract) {
+                    console.log(`✅ Contract found with bytecode length: ${contract.bytecode?.length || 0}`);
+                    res.json(response(contract.bytecode || "0x"));
+                } else {
+                    console.log(`❌ No contract found at ${normalizedAddress}`);
+                    res.json(response("0x"));
+                }
+            } catch (error) {
+                console.log(`⚠️ Invalid address format: ${address}`);
+                res.json(response("0x")); // Return empty bytecode for invalid address
             }
             break;
         }
@@ -350,12 +353,12 @@ case "eth_getTransactionReceipt":
                 if (!tx.receiver && tx.data) {
                     // Find if we have stored a contract address for this transaction
                     for (const [address, contract] of Object.entries(blockchain.contracts)) {
-                        if (contract.deployedByTx === txHash) {
-                            contractAddress = address;
-                            receipt.contractAddress = address;
-                            break;
-                        }
-                    }
+                      if (contract.deployedByTx === txHash) {
+                          contractAddress = address;
+                          receipt.contractAddress = address;
+                          break;
+                      }
+                  }
                 }
                 break;
             }
@@ -478,6 +481,68 @@ case "eth_call": {
             res.json(response(blockResponse));
           }
           break;
+          case "eth_getTransactionByHash":
+                    {
+                        const [txHash] = params || [];
+                        if (!txHash) {
+                            res.status(400).json(errorResponse("Transaction hash parameter required"));
+                            return;
+                        }
+
+                        let transaction = null;
+                        let blockNumber = null;
+                        let blockHash = null;
+                        let transactionIndex = null;
+
+                        // Check pending transactions first
+                        for (let i = 0; i < blockchain.pendingTransactions.length; i++) {
+                            const tx = blockchain.pendingTransactions[i];
+                            if (tx.calculateHash() === txHash) {
+                                transaction = tx;
+                                transactionIndex = toHex(i);
+                                break;
+                            }
+                        }
+
+                        // If not found in pending, check the chain
+                        if (!transaction) {
+                            for (const block of blockchain.chain) {
+                                for (let i = 0; i < block.transactions.length; i++) {
+                                    const tx = block.transactions[i];
+                                    if (tx.calculateHash() === txHash) {
+                                        transaction = tx;
+                                        blockNumber = toHex(block.index);
+                                        blockHash = block.hash;
+                                        transactionIndex = toHex(i);
+                                        break;
+                                    }
+                                }
+                                if (transaction) break;
+                            }
+                        }
+
+                        if (!transaction) {
+                            res.json(response(null)); // Return null if transaction not found
+                            return;
+                        }
+
+                        const txResponse = {
+                            hash: txHash,
+                            blockHash: blockHash || null,
+                            blockNumber: blockNumber || null,
+                            transactionIndex: transactionIndex || null,
+                            from: transaction.sender,
+                            to: transaction.receiver || null,
+                            value: toHex(transaction.data.amount || 0),
+                            gas: toHex(transaction.gasLimit || 21000),
+                            gasPrice: toHex(blockchain.getGasPrice()),
+                            input: transaction.data && typeof transaction.data !== 'object' ? transaction.data : "0x",
+                            nonce: toHex(await getTransactionCount(transaction.sender)),
+                        };
+
+                        res.json(response(txResponse));
+                    }
+        
         case "eth_getBlockByHash":
           {
             const [blockHash, includeTx] = params || [];
@@ -533,84 +598,71 @@ case "eth_call": {
     }
   });
 
-  app.post('/submit-data', async (req, res) => {
-    const { sender, receiver, data, signature, timestamp, gasLimit } = req.body;
+// api.js
+app.post('/submit-data', async (req, res) => {
+  const { sender, receiver, data, signature, timestamp, gasLimit } = req.body;
 
-    console.log('Received request:', req.body);
+  try {
+      // Assuming data is a hex string; convert to UTF-8 for AI check
+      const fileData = ethers.utils.toUtf8String(data);
+      const aiResponse = await checkDataUniqueness(new Blob([fileData], { type: 'text/plain' }));
 
-    try {
-        const aiResponse = await checkDataUniqueness(data);
-        if (aiResponse.uniqueness_score <= 50) {
-            return res.status(400).json({ error: 'Data uniqueness score is too low' });
-        }
+      if (aiResponse.uniqueness_score <= 50) {
+          return res.status(400).json({ error: 'Data uniqueness score is too low' });
+      }
 
-        const transaction = new Transaction(
-            sender,
-            receiver,
-            ethers.utils.toUtf8String(data), // Convert hex string back to UTF-8 string
-            gasLimit,
-            signature,
-            timestamp
-        );
+      const transaction = new Transaction(
+          sender,
+          receiver,
+          fileData,
+          gasLimit,
+          signature,
+          timestamp,
+          aiResponse.uniqueness_score // Store the uniqueness score
+      );
 
-        // Process the transaction without mining
-        const txHash = await blockchain.processTransaction(transaction);
-        p2pServer.broadcastTransaction(transaction);
+      const txHash = await blockchain.processTransaction(transaction);
+      p2pServer.broadcastTransaction(transaction);
 
-        res.status(201).json({ 
-            txHash, 
-            message: 'Transaction processed successfully',
-            pendingMining: true
-        });
-    } catch (error) {
-        console.error('Transaction error:', error.message);
-        res.status(400).json({ error: error.message });
-    }
+      // Automatically mine if uniqueness score > 50
+      const blockHash = await blockchain.minePendingTransactions(sender);
+
+      res.status(201).json({
+          txHash,
+          blockHash,
+          message: 'Transaction processed and block mined successfully',
+          uniquenessScore: aiResponse.uniqueness_score
+      });
+  } catch (error) {
+      console.error('Transaction error:', error.message);
+      res.status(400).json({ error: error.message });
+  }
 });
 
 app.post('/mine-block', async (req, res) => {
   const { minerAddress } = req.body;
-  
+
   if (!minerAddress) {
       return res.status(400).json({ error: 'Miner address is required' });
   }
-  
-  // Check if there are pending transactions
+
   if (!blockchain.hasPendingTransactions()) {
-      return res.status(400).json({ 
-          error: 'No pending transactions to mine', 
-          success: false 
-      });
+      return res.status(400).json({ error: 'No pending transactions to mine', success: false });
   }
-  
+
   try {
       const blockHash = await blockchain.minePendingTransactions(minerAddress);
-      
-      if (blockHash) {
-          // Broadcast the updated chain to all connected peers
-          p2pServer.broadcast({
-              type: 'CHAIN',
-              chain: blockchain.chain
-          });
-          
-          return res.status(200).json({ 
-              success: true, 
-              blockHash,
-              message: `Block successfully mined by ${minerAddress}`,
-              reward: blockchain.miningReward / 10**18
-          });
-      } else {
-          return res.status(400).json({ 
-              success: false,
-              message: 'Mining failed - no pending transactions' 
-          });
-      }
+      p2pServer.broadcast({ type: 'CHAIN', chain: blockchain.chain });
+
+      return res.status(200).json({
+          success: true,
+          blockHash,
+          message: `Block successfully mined by ${minerAddress}`,
+          reward: blockchain.miningReward / 10 ** 18
+      });
   } catch (error) {
       console.error('Mining error:', error);
-      return res.status(500).json({ 
-          success: false,
-          error: error.message 
-      });
+      return res.status(500).json({ success: false, error: error.message });
   }
 });
 
